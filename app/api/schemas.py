@@ -4,7 +4,7 @@ Enforces request validation, serialization, and OpenAPI documentation schemas.
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -42,6 +42,14 @@ class ChatRequest(BaseModel):
         max_length=1000,
         description="The natural language question to ask the knowledge base.",
     )
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("Query cannot be empty or contain only whitespace.")
+        return cleaned
 
 
 class ChatResponse(BaseModel):

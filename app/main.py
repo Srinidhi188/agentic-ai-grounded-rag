@@ -42,10 +42,11 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Enable CORS for frontend integrations
+# Configurable CORS middleware
+cors_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,13 +57,21 @@ app.add_middleware(
 async def global_exception_handler(request: Request, exc: Exception):
     """
     Global exception handler to capture unhandled errors gracefully
-    without leaking internal traceback or credentials to the client.
+    without leaking internal tracebacks, provider errors, or secrets.
     """
+    # Allow HTTPException to pass through normally
+    from fastapi import HTTPException
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail, "error_type": "HTTPException"},
+        )
+
     logger.error("Unhandled server exception at %s: %s", request.url.path, str(exc), exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
-            "detail": "An internal server error occurred. Please try again later.",
+            "detail": "An internal server error occurred while processing the request.",
             "error_type": "InternalServerError",
         },
     )

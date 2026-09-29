@@ -185,16 +185,74 @@ To test the ingestion pipeline offline without upserting:
 python -m scripts.ingest --dry-run
 ```
 
-### 4. Evaluate Semantic Retrieval
+### 4. Running the API Server
+To start the FastAPI server with live reload:
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 5. Interactive API Documentation
+Once the server is running, visit:
+- **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc UI**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **OpenAPI JSON**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
+
+### 6. Example API Usage
+
+#### Supported Question Request
+```bash
+curl -X POST "http://localhost:8000/chat" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "What is Agentic AI according to the eBook?"}'
+```
+
+#### Illustrative Grounded Response (When Supported Context Exists)
+```json
+{
+  "answer": "According to the provided document, Agentic AI refers to autonomous systems capable of reasoning, planning, and executing multi-step workflows without constant human prompting [Page 4].",
+  "context": [
+    {
+      "text": "Agentic AI refers to AI systems designed to operate with autonomy...",
+      "source": "Ebook-Agentic-AI.pdf",
+      "page": 4,
+      "score": 0.8921,
+      "chunk_id": "agentic-ai-p04-c01"
+    }
+  ],
+  "confidence": 0.8921,
+  "is_grounded": true
+}
+```
+
+#### Actual Live Fallback Response (When Context Is Insufficient or Out-of-Scope)
+```json
+{
+  "answer": "I couldn't find sufficient information about this in the provided Agentic AI knowledge base.",
+  "context": [],
+  "confidence": 0.0,
+  "is_grounded": false
+}
+```
+
+### 7. Evaluate Semantic Retrieval
 To inspect retrieval performance on authentic eBook questions:
 ```powershell
 python -m scripts.evaluate_retrieval
 ```
 
-### 5. Run Automated Tests
+### 8. Run Automated Tests
 ```powershell
 pytest -v tests/
 ```
+
+---
+
+## Error Handling & HTTP Status Codes
+
+The API enforces strict validation and safe error encapsulation:
+- **`200 OK`**: Successful grounded answer or deterministic anti-hallucination fallback.
+- **`422 Unprocessable Entity`**: Request validation failure (empty query, whitespace-only, missing query field, or exceeding 1,000 characters).
+- **`500 Internal Server Error`**: Unexpected system failures; client receives a sanitized error payload (`InternalServerError`) while detailed diagnostics are preserved in server logs without leaking credentials or internal stack traces.
 
 ---
 
@@ -214,7 +272,7 @@ pytest -v tests/
 | **Phase 2** | Project foundation, settings, API skeleton, `/health` endpoint | **Completed** |
 | **Phase 3** | PDF acquisition, extraction, chunking, embeddings, Pinecone integration | **Completed** |
 | **Phase 4** | LangGraph RAG workflow, relevance guardrail, grounded generation | **Completed** |
-| **Phase 5** | FastAPI `/chat` endpoint integration & error handling | *Pending* |
+| **Phase 5** | FastAPI `/chat` endpoint integration & error handling | **Completed** |
 | **Phase 6** | End-to-end question evaluation & hallucination testing | *Pending* |
 | **Phase 7** | Comprehensive interview notes & architecture guide | *Pending* |
 | **Phase 8** | Final code review & submission preparation | *Pending* |

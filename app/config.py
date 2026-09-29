@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
     LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    CORS_ORIGINS: str = "*"
 
     # Knowledge Base
     PDF_URL: str = "https://konverge.ai/pdf/Ebook-Agentic-AI.pdf"

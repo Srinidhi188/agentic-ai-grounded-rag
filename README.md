@@ -191,7 +191,26 @@ To start the FastAPI server with live reload:
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 5. Interactive API Documentation
+### 5. Interactive Web UI & API Documentation
+
+#### Running the Web UI
+The application includes a clean, professional, responsive web interface located in `frontend/`.
+
+1. **Start the FastAPI backend server**:
+   ```powershell
+   uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+   ```
+2. **Access the Chatbot UI**:
+   - Open your browser to **[http://localhost:8000/ui](http://localhost:8000/ui)** (served directly by FastAPI).
+   - Alternatively, open `frontend/index.html` directly in your browser or run a standalone static server:
+     ```powershell
+     python -m http.server 3000 --directory frontend
+     ```
+3. **How the UI Communicates with `/chat`**:
+   - The UI sends JSON requests to `POST http://127.0.0.1:8000/chat` with `{ "query": "..." }`.
+   - Displays live answers with citation badges (`[Page X]`), grounded status (`Grounded ✓` vs `Not enough information in the eBook`), retrieval confidence scores, and an expandable drawer showing retrieved chunk IDs, similarity scores, and text excerpts.
+
+#### Interactive API Documentation
 Once the server is running, visit:
 - **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc UI**: [http://localhost:8000/redoc](http://localhost:8000/redoc)

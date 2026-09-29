@@ -80,6 +80,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Register API routes
 app.include_router(api_router)
 
+# Mount frontend UI if directory exists
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+if frontend_dir.exists():
+    app.mount("/ui", StaticFiles(directory=str(frontend_dir), html=True), name="ui")
+
 
 @app.get("/", tags=["Root"])
 async def root():
@@ -88,4 +96,5 @@ async def root():
         "message": "Welcome to Agentic AI eBook Grounded RAG API",
         "documentation": "/docs",
         "health_check": "/health",
+        "ui": "/ui",
     }

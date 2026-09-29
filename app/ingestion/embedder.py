@@ -98,14 +98,28 @@ class GeminiEmbedder(BaseEmbedder):
     def model_name(self) -> str:
         return self._model
 
-    def embed_documents(self, texts: List[str], batch_size: int = 20) -> List[List[float]]:
+    def embed_documents(self, texts: List[str], batch_size: int = 50) -> List[List[float]]:
+        import time
         embeddings: List[List[float]] = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            for text in batch:
-                res = self._client.models.embed_content(model=self._model, contents=text)
-                vals = res.embedding.values if hasattr(res, "embedding") else res.embeddings[0].values
-                embeddings.append(list(vals))
+            for attempt in range(5):
+                try:
+                    res = self._client.models.embed_content(model=self._model, contents=batch)
+                    if hasattr(res, "embeddings") and res.embeddings:
+                        embeddings.extend([list(item.values) for item in res.embeddings])
+                    elif hasattr(res, "embedding"):
+                        embeddings.append(list(res.embedding.values))
+                    break
+                except Exception as e:
+                    if "429" in str(e) and attempt < 4:
+                        import re
+                        match = re.search(r"retry in ([0-9.]+)s", str(e))
+                        delay = float(match.group(1)) + 2.0 if match else float(2 ** attempt + 5)
+                        logger.warning("Gemini embedding rate limit hit (429). Retrying in %.1f seconds...", delay)
+                        time.sleep(delay)
+                    else:
+                        raise
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:

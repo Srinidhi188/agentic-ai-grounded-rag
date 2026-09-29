@@ -212,7 +212,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <span class="grounded-badge ${isGrounded ? "grounded" : "ungrounded"}">
           ${isGrounded ? "Grounded ✓" : "Not enough information in the eBook"}
         </span>
-        <span class="confidence-metric">Confidence: ${confidenceVal}</span>
+        <span class="confidence-metric" title="Vector cosine similarity heuristic from retrieved knowledge chunks (not a calibrated probability)">Retrieval Score: ${confidenceVal}</span>
       </div>
       ${
         contextList.length > 0

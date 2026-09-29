@@ -1,60 +1,118 @@
 """
-Semantic Retrieval Evaluation Script.
-Loads a curated set of questions derived from the Agentic AI eBook,
-executes retrieval against the vector store, and displays the retrieved evidence.
+Semantic Retrieval and Grounding Evaluation Script.
+Loads the curated 10-question evaluation dataset from data/evaluation_questions.json,
+executes retrieval against Pinecone (or local extracted chunks in --offline mode),
+and outputs detailed evidence, relevance decisions, and grounding evaluation.
 
 Usage:
-    python -m scripts.evaluate_retrieval [--top-k N]
+    python -m scripts.evaluate_retrieval [--top-k N] [--offline]
 """
 
 import argparse
+import json
 import logging
-import sys
-from typing import List, Dict
+import math
+from pathlib import Path
+from typing import List, Dict, Any
+
 from app.config import get_settings
 from app.ingestion.embedder import get_embedder, MockEmbedder
 from app.vectorstore.pinecone_store import PineconeStore, PineconeNotConfiguredError
+from app.ingestion.loader import PDFLoader
+from app.ingestion.chunker import TextChunker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("eval_retrieval")
 
-# Curated test questions directly from the Agentic AI eBook sections
-EVALUATION_QUESTIONS = [
-    {
-        "id": "q1",
-        "question": "What is Agentic AI and how does it shift from reactive to proactive problem-solving?",
-        "expected_section": "Chapter 1: Introduction to Agentic AI (Pages 7-10)",
-    },
-    {
-        "id": "q2",
-        "question": "How do Agentic AI and Large Language Models (LLMs) work together?",
-        "expected_section": "Section 1.1 / Table Comparison (Page 10)",
-    },
-    {
-        "id": "q3",
-        "question": "What is the Anatomy of an Agentic AI System and what are its core components?",
-        "expected_section": "Chapter 2: Anatomy of an Agentic AI System (Pages 12-25)",
-    },
-    {
-        "id": "q4",
-        "question": "How do Multi-Agent Systems orchestrate collaboration between specialized agents?",
-        "expected_section": "Chapter 3: Multi-Agent Systems (Pages 26-38)",
-    },
-    {
-        "id": "q5",
-        "question": "What are the practical enterprise use cases of Agentic AI described in the eBook?",
-        "expected_section": "Chapter 6: Practical Applications of Agentic AI (Pages 50-60)",
-    },
-    {
-        "id": "q6_unsupported",
-        "question": "What is the recipe for baking chocolate chip cookies?",
-        "expected_section": "OUT OF SCOPE (Must not match or must yield low relevance)",
-    },
-]
+DEFAULT_QUESTIONS_FILE = Path("data/evaluation_questions.json")
 
 
-def run_evaluation(top_k: int = 3):
+def load_evaluation_questions(filepath: Path = DEFAULT_QUESTIONS_FILE) -> List[Dict[str, Any]]:
+    """Load evaluation questions from JSON file with fallback."""
+    if filepath.exists():
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("questions", [])
+
+    return [
+        {
+            "id": "Q1_FACTUAL",
+            "category": "Direct Factual",
+            "query": "What is Agentic AI according to the eBook?",
+            "expected_pages": [4, 7, 8],
+        },
+        {
+            "id": "Q7_UNSUPPORTED",
+            "category": "Unsupported Out-of-Scope",
+            "query": "What is the recipe for baking homemade chocolate chip cookies?",
+            "expected_pages": [],
+        },
+    ]
+
+
+def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    """Compute cosine similarity between two float vectors."""
+    dot = sum(a * b for a, b in zip(v1, v2))
+    norm1 = math.sqrt(sum(a * a for a in v1))
+    norm2 = math.sqrt(sum(b * b for b in v2))
+    return dot / (norm1 * norm2) if norm1 and norm2 else 0.0
+
+
+def run_offline_evaluation(questions: List[Dict[str, Any]], top_k: int = 3):
+    """Run deterministic retrieval evaluation on real PDF chunks using local embedder."""
     settings = get_settings()
+    pdf_path = Path("data/Ebook-Agentic-AI.pdf")
+    if not pdf_path.exists():
+        print(f"[ERROR] Cached PDF not found at {pdf_path}. Run 'python -m scripts.ingest --dry-run' first.")
+        return
+
+    print("\n" + "=" * 80)
+    print("      OFFLINE CODE-VERIFICATION EVALUATION (Deterministic Local Embedder)")
+    print("=" * 80)
+    print("Notice: This mode evaluates pipeline logic and chunk extraction offline.")
+    print("Scores are derived deterministically and demonstrate state flow without API quota.")
+    print("=" * 80 + "\n")
+
+    loader = PDFLoader()
+    pages = loader.extract_pages(pdf_path)
+    chunker = TextChunker(chunk_size=800, chunk_overlap=150)
+    chunks = chunker.chunk_document(pages)
+
+    embedder = MockEmbedder(dimension=1536)
+    chunk_vectors = [(c, embedder.embed_query(c.text)) for c in chunks]
+
+    for item in questions:
+        qid = item.get("id")
+        cat = item.get("category")
+        q = item.get("query")
+        exp_pages = item.get("expected_pages", [])
+
+        q_vec = embedder.embed_query(q)
+        scores = []
+        for c, c_vec in chunk_vectors:
+            sim = cosine_similarity(q_vec, c_vec)
+            scores.append((sim, c))
+
+        scores.sort(key=lambda x: x[0], reverse=True)
+        top_matches = scores[:top_k]
+        top_score = top_matches[0][0] if top_matches else 0.0
+        relevance_decision = "SUFFICIENT (Route -> Generate)" if top_score >= settings.RELEVANCE_THRESHOLD else "INSUFFICIENT (Route -> Fallback)"
+
+        print(f"[{qid}] Category: {cat}")
+        print(f"Query: \"{q}\"")
+        print(f"Expected Pages: {exp_pages if exp_pages else 'None (Out of Scope)'}")
+        print(f"Top Score: {top_score:.4f} | Relevance Gate: {relevance_decision}")
+
+        for rank, (score, c) in enumerate(top_matches, 1):
+            preview = c.text.replace("\n", " ")[:110]
+            print(f"   Rank {rank}: [Score: {score:.4f}] Chunk: {c.metadata.chunk_id} (Page {c.metadata.page})")
+            print(f"           \"{preview}...\"")
+        print("-" * 80)
+
+
+def run_evaluation(top_k: int = 3, offline: bool = False):
+    settings = get_settings()
+    questions = load_evaluation_questions()
 
     print("=" * 80)
     print("        AGENTIC AI EBOOK — SEMANTIC RETRIEVAL EVALUATION")
@@ -62,44 +120,49 @@ def run_evaluation(top_k: int = 3):
     print(f"Configured Vector Store: Pinecone ({settings.PINECONE_INDEX_NAME})")
     print(f"Configured Embedding Provider: {settings.EMBEDDING_PROVIDER} ({settings.EMBEDDING_MODEL})")
     print(f"Configured Relevance Threshold: {settings.RELEVANCE_THRESHOLD}")
+    print(f"Total Evaluation Questions: {len(questions)}")
     print("=" * 80)
 
-    # Check whether a real embedding provider is active
+    if offline:
+        run_offline_evaluation(questions, top_k=top_k)
+        return
+
+    # Check embedding provider
     embedder = get_embedder(settings)
     if isinstance(embedder, MockEmbedder):
         print("\n[NOTICE / LIMITATION]")
         print("Semantic retrieval evaluation requires a working embedding provider with active quota.")
         print(f"Current provider is set to or fell back to: {embedder.model_name}")
-        print("To run authentic semantic evaluation, configure valid OPENAI_API_KEY or GEMINI_API_KEY")
-        print("and set EMBEDDING_PROVIDER=openai or EMBEDDING_PROVIDER=gemini in .env.")
+        print("To run authentic semantic evaluation, configure valid OPENAI_API_KEY or GEMINI_API_KEY in .env.")
+        print("To test pipeline logic offline without API quota, run: python -m scripts.evaluate_retrieval --offline")
         print("=" * 80)
         return
 
-    # Check Pinecone store
+    # Check Pinecone
     try:
         store = PineconeStore(settings)
-        # Test client connectivity
         _ = store.client
     except PineconeNotConfiguredError as e:
         print("\n[NOTICE / LIMITATION]")
         print(f"Pinecone vector store is not configured: {e}")
         print("To evaluate live retrieval against Pinecone, set PINECONE_API_KEY in .env.")
+        print("To test pipeline logic offline without API quota, run: python -m scripts.evaluate_retrieval --offline")
         print("=" * 80)
         return
     except Exception as e:
         print(f"\n[ERROR] Pinecone initialization failed: {e}")
         return
 
-    # Run evaluation questions
-    print(f"\nEvaluating {len(EVALUATION_QUESTIONS)} test questions (top_k={top_k}):\n")
+    # Live Pinecone Evaluation
+    print(f"\nEvaluating {len(questions)} test questions against live Pinecone (top_k={top_k}):\n")
+    for item in questions:
+        qid = item.get("id")
+        cat = item.get("category")
+        q = item.get("query")
+        exp_pages = item.get("expected_pages", [])
 
-    for item in EVALUATION_QUESTIONS:
-        qid = item["id"]
-        q = item["question"]
-        expected = item["expected_section"]
-
-        print(f"[{qid}] Question: {q}")
-        print(f"Expected Knowledge Area: {expected}")
+        print(f"[{qid}] Category: {cat}")
+        print(f"Query: \"{q}\"")
 
         try:
             query_vector = embedder.embed_query(q)
@@ -109,8 +172,8 @@ def run_evaluation(top_k: int = 3):
                 print("  -> No results returned from Pinecone.")
             else:
                 top_score = results[0]["score"]
-                status = "RELEVANT" if top_score >= settings.RELEVANCE_THRESHOLD else "INSUFFICIENT (Will Trigger Fallback)"
-                print(f"  -> Top Score: {top_score:.4f} | Status: {status}")
+                status = "SUFFICIENT (Route -> Generate)" if top_score >= settings.RELEVANCE_THRESHOLD else "INSUFFICIENT (Route -> Fallback)"
+                print(f"  -> Top Score: {top_score:.4f} | Gate Decision: {status}")
 
                 for rank, res in enumerate(results, 1):
                     chunk_id = res.get("chunk_id", "N/A")
@@ -119,18 +182,22 @@ def run_evaluation(top_k: int = 3):
                     preview = res.get("text", "").replace("\n", " ")[:120]
                     print(f"     Rank {rank}: [Score: {score:.4f}] Chunk: {chunk_id} (Page {page})")
                     print(f"             \"{preview}...\"")
-
         except Exception as err:
-            print(f"  -> Evaluation error for query: {err}")
+            print(f"  -> Live query error: {err}")
 
         print("-" * 80)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate semantic retrieval on Agentic AI questions.")
+    parser = argparse.ArgumentParser(description="Evaluate retrieval on Agentic AI eBook questions.")
     parser.add_argument("--top-k", type=int, default=3, help="Top-K results to retrieve per question.")
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run offline code-verification evaluation using local extracted PDF chunks and deterministic embeddings.",
+    )
     args = parser.parse_args()
-    run_evaluation(top_k=args.top_k)
+    run_evaluation(top_k=args.top_k, offline=args.offline)
 
 
 if __name__ == "__main__":

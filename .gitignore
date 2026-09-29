@@ -44,7 +44,8 @@ Thumbs.db
 .coverage
 htmlcov/
 
-# Data & PDF cache (optional local cache)
-data/
+# Data & PDF cache (ignore PDF downloads, track evaluation data)
 cache/
 *.pdf
+data/*.pdf
+!data/evaluation_questions.json
